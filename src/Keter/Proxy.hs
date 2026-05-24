@@ -85,6 +85,7 @@ data ProxySettings = MkProxySettings
   , psUnknownHost         :: ByteString -> ByteString
   , psMissingHost         :: ByteString
   , psProxyException      :: ByteString
+  , psServerName          :: ByteString
   }
 
 makeSettings :: HostMan.HostManager -> KeterM KeterConfig ProxySettings
@@ -100,6 +101,7 @@ makeSettings hostman = do
     let psIpFromHeader = kconfigIpFromHeader
     let psHealthcheckPath = encodeUtf8 <$> kconfigHealthcheckPath
     let psTrustForwardedFor _req = True
+    let psServerName = maybe defaultServerName encodeUtf8 kconfigServerName
     pure $ MkProxySettings{..}
     where
         psHostLookup = HostMan.lookupAction hostman . CI.mk
@@ -119,20 +121,23 @@ taggedReadFile tag (Just file) fallback processContents = do
 reverseProxy :: ListeningPort -> KeterM ProxySettings ()
 reverseProxy listener = do
   settings <- ask
+  let serverName = psServerName settings
   let (run, isSecure) =
           case listener of
               LPInsecure host port ->
-                  (liftIO . Warp.runSettings (warp host port), False)
+                  (liftIO . Warp.runSettings (warp host port serverName), False)
               LPSecure host port cert chainCerts key session ->
                   (liftIO . WarpTLS.runTLS
                       (connectClientCertificates (psHostLookup settings) session $ WarpTLS.tlsSettingsChain
                           cert
                           (V.toList chainCerts)
                           key)
-                      (warp host port), True)
+                      (warp host port serverName), True)
   withClient isSecure >>= run . gzip def{gzipFiles = GzipPreCompressed GzipIgnore}
   where
-    warp host port = Warp.setHost host $ Warp.setPort port Warp.defaultSettings
+    warp host port serverName = Warp.setHost host
+                              $ Warp.setPort port
+                              $ Warp.setServerName serverName Warp.defaultSettings
 
 connectClientCertificates :: (ByteString -> IO (Maybe (ProxyAction, TLS.Credentials))) -> Bool -> WarpTLS.TLSSettings -> WarpTLS.TLSSettings
 connectClientCertificates hl session s =
@@ -366,3 +371,6 @@ unknownHostResponse host body = Wai.responseBuilder
 
 escapeHtml :: ByteString -> ByteString
 escapeHtml = toByteString . fromHtmlEscapedByteString
+
+defaultServerName :: ByteString
+defaultServerName = S8.pack $ "Keter/" <> showVersion Pkg.version

@@ -124,6 +124,7 @@ data KeterConfig = KeterConfig
     , kconfigHealthcheckPath      :: !(Maybe Text)
 
     , kconfigGracefulDrainMicros  :: !(Maybe Int)
+    , kconfigServerName           :: !(Maybe Text)
     }
 
 instance ToCurrent KeterConfig where
@@ -146,6 +147,7 @@ instance ToCurrent KeterConfig where
         , kconfigRotateLogs = True
         , kconfigHealthcheckPath = Nothing
         , kconfigGracefulDrainMicros = Nothing
+        , kconfigServerName = Nothing
         }
       where
         getSSL Nothing = V.empty
@@ -176,6 +178,7 @@ defaultKeterConfig = KeterConfig
         , kconfigRotateLogs = True
         , kconfigHealthcheckPath = Nothing
         , kconfigGracefulDrainMicros = Nothing
+        , kconfigServerName = Nothing
         }
 
 instance ParseYamlFile KeterConfig where
@@ -203,6 +206,7 @@ instance ParseYamlFile KeterConfig where
             <*> o .:? "rotate-logs" .!= True
             <*> o .:? "app-crash-hook"
             <*> o .:? "graceful-drain-micros"
+            <*> o .:? "server-name"
 
 -- | Whether we should force redirect to HTTPS routes.
 type RequiresSecure = Bool
