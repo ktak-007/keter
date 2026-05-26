@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               keter
-version:            2.3.5
+version:            2.3.6
 synopsis:
   Web application deployment manager, focusing on Haskell web frameworks. It mitigates downtime.
 
@@ -27,7 +27,7 @@ library
   default-language:   Haskell98
   default-extensions: ImportQualifiedPost
   build-depends:
-    , aeson                 >=2.0.0    && <2.2     || ^>=2.2.0.0
+    , aeson                 >=2.0.0    && <2.2     || ^>=2.2.0.0 || ^>=2.3.0.0
     , array                 >=0.5.4    && <0.6
     , async                 >=2.2.4    && <2.3
     , attoparsec            >=0.14.4   && <0.15

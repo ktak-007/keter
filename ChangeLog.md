@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.3.6
+- Widen `aeson` upper bound to allow 2.3.x for Stackage compatibility
+
 ## 2.3.5
 - Bump containers
 
