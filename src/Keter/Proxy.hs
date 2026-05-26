@@ -132,7 +132,9 @@ reverseProxy listener = do
                       (warp host port), True)
   withClient isSecure >>= run . gzip def{gzipFiles = GzipPreCompressed GzipIgnore}
   where
-    warp host port = Warp.setHost host $ Warp.setPort port Warp.defaultSettings
+    warp host port = Warp.setHost host
+                   $ Warp.setPort port
+                   $ Warp.setServerName "" Warp.defaultSettings
 
 connectClientCertificates :: (ByteString -> IO (Maybe (ProxyAction, TLS.Credentials))) -> Bool -> WarpTLS.TLSSettings -> WarpTLS.TLSSettings
 connectClientCertificates hl session s =
