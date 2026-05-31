@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.0
+
+- HTTP responses no longer contain the Server header. [338](https://github.com/snoyberg/keter/issues/338)
+
 ## 2.3.6
 - Widen `aeson` upper bound to allow 2.3.x for Stackage compatibility
 
