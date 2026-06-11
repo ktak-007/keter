@@ -83,15 +83,18 @@ runKeterConfigReader :: MonadIO m
                      -> ReaderT KeterConfig m a
                      -> m a
 runKeterConfigReader input ctx = do
-    exists <- liftIO $ doesFileExist input
+    isFile <- liftIO $ doesFileExist input
+    isDir <- liftIO $ doesDirectoryExist input
     config <- liftIO $
-        if exists
+        if isFile
             then do
                 eres <- decodeFileRelative input
                 case eres of
                     Left e -> throwIO $ InvalidKeterConfigFile input e
                     Right x -> return x
-            else return defaultKeterConfig { kconfigDir = input }
+            else if isDir
+                then return defaultKeterConfig { kconfigDir = input }
+                else throwIO $ ConfigPathDoesNotExist input
     runReaderT ctx config
 
 -- | Running the Keter logger requires a context with access to a KeterConfig, hence the

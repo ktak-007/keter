@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.1
+
+- Fix misleading usage message and silent directory creation when the
+  config path does not exist. The argument is now described as a keter
+  home directory or config file, and a path that is neither an existing
+  file nor an existing directory is reported as an error instead of being
+  silently adopted as the keter home directory. [199](https://github.com/snoyberg/keter/issues/199)
+
 ## 2.4.0
 
 - HTTP responses no longer contain the Server header. [338](https://github.com/snoyberg/keter/issues/338)

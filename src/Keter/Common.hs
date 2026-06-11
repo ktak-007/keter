@@ -65,6 +65,7 @@ data KeterException = CannotParsePostgres FilePath
                     | NoPortsAvailable
                     | InvalidConfigFile Data.Yaml.ParseException
                     | InvalidKeterConfigFile !FilePath !Data.Yaml.ParseException
+                    | ConfigPathDoesNotExist !FilePath
                     | CannotReserveHosts !AppId !(Map Host AppId)
                     | FileNotExecutable !FilePath
                     | ExecutableNotFound !FilePath
