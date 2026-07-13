@@ -23,4 +23,4 @@ main = do
 printUsage :: IO ()
 printUsage = do
     pn <- getProgName
-    error $ "Usage: " ++ pn ++ " <config file>"
+    error $ "Usage: " ++ pn ++ " <keter-home-directory | config-file>"
