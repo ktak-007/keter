@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Keter.Config.Middleware where
 
@@ -9,6 +10,7 @@ import Network.Wai
 import Prelude
 
 import Control.Arrow ((***))
+import Control.Exception (throwIO)
 import Control.Monad
 
 -- various Middlewares
@@ -24,10 +26,15 @@ import Network.Wai.Middleware.MethodOverridePost (methodOverridePost)
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Lazy as L
 
+import Data.Map (Map)
+import Data.Map qualified as Map
 import Data.String (fromString)
+import Data.Text (unpack)
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Lazy.Encoding as TL
 import qualified Keter.Aeson.KeyHelper as AK (empty, toKey, toList, toText)
+import Keter.Common (KeterException(ExecutableNotFound))
+import Keter.GHC.Types (SOHandles(..))
 
 -- Rate limiter (updated API: buildEnvFromConfig + buildRateLimiterWithEnv)
 import Keter.RateLimiter.WAI
@@ -48,6 +55,7 @@ data MiddlewareConfig = AcceptOverride
                          -- ^ Status Message
                       | RateLimiter !RateLimiterConfig
                          -- ^ Rate Limiter
+                      | Custom ![S.ByteString]
           deriving (Show, Generic)
 
 instance FromJSON MiddlewareConfig where
@@ -74,6 +82,8 @@ instance FromJSON MiddlewareConfig where
 
       [("rate-limiter", v)] -> RateLimiter <$> parseJSON v
 
+      [("custom", v)] -> Custom . map T.encodeUtf8 <$> parseJSON v
+
       _ -> mzero
   parseJSON _ = mzero
 
@@ -97,6 +107,8 @@ instance ToJSON MiddlewareConfig where
                                , "message" .= TL.decodeUtf8 msg ] ]
   toJSON (RateLimiter rl) = object [ "rate-limiter" .= toJSON rl ]
 
+  toJSON (Custom custom) = object ["custom" .= map T.decodeUtf8 custom]
+
 {-- Still missing
 -- Clean path
 -- Gzip
@@ -106,9 +118,9 @@ instance ToJSON MiddlewareConfig where
 --}
 
 -- Build middlewares in IO, because the RateLimiter needs mutable state.
-processMiddlewareIO :: [MiddlewareConfig] -> IO Middleware
-processMiddlewareIO cfgs = do
-  mws <- mapM toMiddlewareIO cfgs
+processMiddlewareIO :: Map S.ByteString SOHandles -> [MiddlewareConfig] -> IO Middleware
+processMiddlewareIO runningSoLibs cfgs = do
+  mws <- mapM (toMiddlewareIO runningSoLibs) cfgs
   pure (composeMiddleware mws)
 
 processMiddleware :: [MiddlewareConfig] -> Middleware
@@ -132,16 +144,26 @@ unsafeToMiddleware (BasicAuth realm cred) =
 unsafeToMiddleware (AddHeaders headers) = addHeaders headers
 unsafeToMiddleware (RateLimiter _)      = id
 
-toMiddlewareIO :: MiddlewareConfig -> IO Middleware
-toMiddlewareIO AcceptOverride     = pure acceptOverride
-toMiddlewareIO Autohead           = pure autohead
-toMiddlewareIO Jsonp              = pure jsonp
-toMiddlewareIO MethodOverride     = pure methodOverride
-toMiddlewareIO MethodOverridePost = pure methodOverridePost
-toMiddlewareIO (Local s c)        = pure $ local (responseLBS (toEnum s) [] c)
-toMiddlewareIO (BasicAuth realm cred) =
+toMiddlewareIO :: Map S.ByteString SOHandles -> MiddlewareConfig -> IO Middleware
+toMiddlewareIO _ AcceptOverride     = pure acceptOverride
+toMiddlewareIO _ Autohead           = pure autohead
+toMiddlewareIO _ Jsonp              = pure jsonp
+toMiddlewareIO _ MethodOverride     = pure methodOverride
+toMiddlewareIO _ MethodOverridePost = pure  methodOverridePost
+toMiddlewareIO _ (Local s c)        = pure $ local (responseLBS (toEnum s) [] c)
+toMiddlewareIO _ (BasicAuth realm cred) =
   pure $ basicAuth (\u p -> pure $ (Just p ==) $ lookup u cred) (fromString realm)
-toMiddlewareIO (AddHeaders headers) = pure $ addHeaders headers
-toMiddlewareIO (RateLimiter rl) = do
+toMiddlewareIO _ (AddHeaders headers) = pure $ addHeaders headers
+toMiddlewareIO _ (RateLimiter rl) = do
   env <- buildEnvFromConfig rl
   pure (buildRateLimiterWithEnv env)
+toMiddlewareIO runningSoLibs (Custom c) = composeMiddleware <$> mapM (customMiddleware runningSoLibs) c
+
+customMiddleware :: Map S.ByteString SOHandles -> S.ByteString -> IO Middleware
+customMiddleware runningSoLibs name = do
+  SOHandles {..} <- maybe
+    (throwIO $ ExecutableNotFound $ "Shared library " <> unpack (T.decodeUtf8 name) <>  " not found")
+    pure
+    (Map.lookup name runningSoLibs)
+  return $ \app req respond ->
+    middleware 1 >> app req respond

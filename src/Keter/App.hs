@@ -6,6 +6,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Keter.App
     ( start
@@ -24,12 +25,13 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.IO.Unlift (withRunInIO)
 import Control.Monad.Logger
 import Control.Monad.Reader (ask)
+import Data.ByteString (ByteString)
 import Data.CaseInsensitive qualified as CI
 import Data.Foldable (for_)
 import Data.IORef
 import Data.Map (Map)
 import Data.Map qualified as Map
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, mapMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text, pack, unpack)
@@ -68,6 +70,9 @@ import System.Timeout (timeout)
 
 import Keter.Config.Middleware (processMiddlewareIO, MiddlewareConfig)
 import Network.Wai (Middleware)
+import Keter.Config.V10 (SoLibConfig (..))
+import Keter.GHC.Types (SOHandles(..))
+import Keter.GHC.Hotswap (registerHotswap, withSO)
 
 unpackBundle :: FilePath
              -> AppId
@@ -103,13 +108,19 @@ withConfig aid (AIBundle fp modtime) f = do
         bracketOnError (rio $ unpackBundle fp aid) (\(newdir, _) -> removeDirectoryRecursive newdir) $ \(newdir, bconfig) ->
             rio $ f (Just newdir) bconfig (Just modtime)
 
+type WithActionsCallback a = [WebAppConfig Port]
+                          -> [BackgroundConfig]
+                          -> Map Host (ProxyAction, TLS.Credentials)
+                          -> KeterM AppStartConfig a
+
 withReservations :: AppId
                  -> BundleConfig
-                 -> ([WebAppConfig Port] -> [BackgroundConfig] -> Map Host (ProxyAction, TLS.Credentials) -> KeterM AppStartConfig a)
+                 -> Map ByteString SOHandles
+                 -> WithActionsCallback a
                  -> KeterM AppStartConfig a
-withReservations aid bconfig f = do
+withReservations aid bconfig runningSoLibs f = do
     AppStartConfig{..} <- ask
-    withActions bconfig $ \wacs backs actions ->
+    withActions bconfig runningSoLibs $ \wacs backs actions ->
         withRunInIO $ \rio ->
             bracketOnError
               (rio $ withMappedConfig (const ascHostManager) $ reserveHosts aid $ Map.keysSet actions)
@@ -117,9 +128,10 @@ withReservations aid bconfig f = do
               (\_ -> rio $ f wacs backs actions)
 
 withActions :: BundleConfig
-            -> ([ WebAppConfig Port] -> [BackgroundConfig] -> Map Host (ProxyAction, TLS.Credentials) -> KeterM AppStartConfig a)
+            -> Map ByteString SOHandles
+            -> WithActionsCallback a
             -> KeterM AppStartConfig a
-withActions bconfig f =
+withActions bconfig runningSoLibs f =
     loop (V.toList $ bconfigStanzas bconfig) [] [] Map.empty
   where
     -- todo: add loading from relative location
@@ -129,7 +141,7 @@ withActions bconfig f =
     loadCert _ = return mempty
 
     setupMW :: [Keter.Config.Middleware.MiddlewareConfig] -> IO Middleware
-    setupMW = processMiddlewareIO
+    setupMW = processMiddlewareIO runningSoLibs
 
     loop [] wacs backs actions = f wacs backs actions
     loop (Stanza (StanzaWebApp wac) rs:stanzas) wacs backs actions = do
@@ -176,6 +188,8 @@ withActions bconfig f =
         loop stanzas wacs backs (Map.insert (CI.mk $ reversingHost rev) ((action, rs), cert) actions0)
     loop (Stanza (StanzaBackground back) _:stanzas) wacs backs actions =
         loop stanzas wacs (back:backs) actions
+    loop (Stanza (StanzaSoLib _) _:stanzas) wacs backs actions =
+        loop stanzas wacs backs actions
 
 -- | Gives the log file or log tag name for a given 'AppId'
 appLogName :: AppId -> String
@@ -232,7 +246,8 @@ start aid input tstate =
     withLogger aid Nothing $ \tAppLogger appLogger ->
     withConfig aid input $ \newdir bconfig mmodtime ->
     withSanityChecks bconfig $ 
-    withReservations aid bconfig $ \webapps backs actions ->
+    withSoLibs aid bconfig newdir appLogger $ \runningSolibs ->
+    withReservations aid bconfig runningSolibs $ \webapps backs actions ->
     withBackgroundApps aid bconfig newdir appLogger backs $ \runningBacks ->
     withWebApps aid bconfig newdir appLogger webapps $ \runningWebapps -> do
         asc@AppStartConfig{..} <- ask
@@ -243,6 +258,7 @@ start aid input tstate =
             <$> newTVarIO mmodtime
             <*> newTVarIO runningWebapps
             <*> newTVarIO runningBacks
+            <*> newTVarIO runningSolibs
             <*> return aid
             <*> newTVarIO (Map.keysSet actions)
             <*> newTVarIO newdir
@@ -591,25 +607,28 @@ reload input tstate = do
       withLogger appId (Just appLog) $ \_ appLogger ->
       withConfig appId input $ \newdir bconfig mmodtime ->
       withSanityChecks bconfig $
-      withReservations appId bconfig $ \webapps backs actions -> 
+      withSoLibs appId bconfig newdir appLogger $ \runningSolibs ->
+      withReservations appId bconfig runningSolibs $ \webapps backs actions ->
       withBackgroundApps appId bconfig newdir appLogger backs $ \runningBacks ->
       withWebApps appId bconfig newdir appLogger webapps $ \runningWebapps -> do
           liftIO $ mapM_ (ensureAlive tstate) runningWebapps
           liftIO (readTVarIO appHosts) >>= \hosts ->
             withMappedConfig (const $ ascHostManager appAsc) $
               reactivateApp appId actions hosts
-          (oldApps, oldBacks, oldDir, oldRlog) <- liftIO $ atomically $ do
+          (oldApps, oldBacks, _oldSoLibs, oldDir, oldRlog) <- liftIO $ atomically $ do
               oldApps <- readTVar appRunningWebApps
               oldBacks <- readTVar appBackgroundApps
+              oldSoLibs <- readTVar appSoLibs
               oldDir <- readTVar appDir
               oldRlog <- readTVar appLog
 
               writeTVar appModTime mmodtime
               writeTVar appRunningWebApps runningWebapps
               writeTVar appBackgroundApps runningBacks
+              writeTVar appSoLibs runningSolibs
               writeTVar appHosts $ Map.keysSet actions
               writeTVar appDir newdir
-              return (oldApps, oldBacks, oldDir, oldRlog)
+              return (oldApps, oldBacks, oldSoLibs, oldDir, oldRlog)
           void $ withRunInIO $ \rio ->
             forkIO $ rio $ terminateHelper appId oldApps oldBacks oldDir oldRlog
 
@@ -730,3 +749,36 @@ getForwardedEnv vars = filterEnv <$> getEnvironment
                         return (appMap', rest)
             rest
             -}
+
+withSoLibs :: AppId
+           -> BundleConfig
+           -> Maybe FilePath
+           -> Logger
+           -> (Map ByteString SOHandles -> KeterM AppStartConfig a)
+           -> KeterM AppStartConfig a
+withSoLibs aid bconfig mdir appLogger f = do
+    $logDebug $ pack $ "withSoLibs, configs:" <> show configs
+    withRunInIO $ \rio -> bracketedMap (\cfg f' -> rio $ alloc cfg (liftIO <$> f'))
+                                       (rio . f . Map.fromList)
+                                       configs
+  where
+    alloc = launchSoLib aid bconfig mdir appLogger
+    configs = flip mapMaybe (V.toList $ bconfigStanzas bconfig) $ \case
+        Stanza (StanzaSoLib solib) _ -> Just solib
+        _ -> Nothing
+
+launchSoLib :: AppId
+            -> BundleConfig
+            -> Maybe FilePath
+            -> Logger
+            -> SoLibConfig
+            -> ((ByteString, SOHandles) -> IO a)
+            -> KeterM AppStartConfig a
+launchSoLib aid BundleConfig {..} mdir appLogger soConfig@SoLibConfig {..} f = do
+    $logDebug $ pack $ "launchSolib, soConfig: " <> show soConfig
+    withRunInIO $ \rio -> do
+        so <- registerHotswap "hs_soHandles" soconfigExec
+        withSO so $ \h@SOHandles{..} -> do
+            rio $ $logDebug $ pack $ "someData = " <> show someData
+            initialize 7
+            f (encodeUtf8 soconfigName, h)

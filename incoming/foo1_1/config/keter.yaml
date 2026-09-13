@@ -1,0 +1,21 @@
+stanzas:
+    - type: webapp
+      hosts:
+      - localhost
+      - localhost:8000
+      exec: ../hello
+      args:
+        - Hello World v1.0
+      middleware:
+         - custom:
+            - soTest1
+
+      env:
+        FROM_KETER_CONFIG: foo bar baz
+      forward-env:
+        - FROM_SYSTEM_ENV
+        - ANOTHER_ENV_VAR
+
+    - type: so-lib
+      name: soTest1
+      exec: ../HSghc-hotswap-so-0.1.0.0-inplace.o

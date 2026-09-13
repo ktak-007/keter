@@ -3,12 +3,13 @@
 #  See README.md for build details
 
 
-all: foo.keter foo1_0.keter websockets
+all: foo.keter foo1_0.keter foo1_1.keter websockets
 .PHONY: all nc.keter
 
 # Simple targets
 foo: foo.keter
 foo1_0: foo1_0.keter
+foo1_1: foo1_1.keter
 websockets: websockets.keter
 nc: nc.keter
 
@@ -30,6 +31,15 @@ foo1_0.keter: ./foo1_0/*.hs ./foo1_0/config/*.yaml
 	strip ./foo1_0/worker
 	cd foo1_0; tar czfv ../foo1_0.keter *
 
+foo1_1.keter: ./foo1_1/*.hs ./foo1_1/config/*.yaml ../ghc-hotswap-so/*.cabal ../ghc-hotswap-so/Plugin/*.hs
+	@echo "Build foo1_1"
+	ghc --make ./foo1_1/hello.hs
+	strip ./foo1_1/hello
+	cabal build ghc-hotswap-so
+	find ../dist-newstyle/build -type f -name 'HSghc-hotswap-so-0.1.0.0-inplace.o' -exec cp '{}' ./foo1_1/ \; -quit
+# 	it seemed, strip for so files does not work:
+# 	strip ./foo1_1/HSghc-hotswap-so-0.1.0.0-inplace.o
+	tar czfv foo1_1.keter -C foo1_1 config hello HSghc-hotswap-so-0.1.0.0-inplace.o
 
 # websockets needs extra dependencies:
 #

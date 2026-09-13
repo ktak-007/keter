@@ -1,0 +1,2 @@
+ignore-project: False
+library-for-ghci: True

@@ -10,6 +10,8 @@ module Keter.SharedData.App
     ) where
 
 import Control.Concurrent.STM (STM, TVar, readTVar)
+import Data.ByteString (ByteString)
+import Data.Map (Map)
 import Data.Set (Set)
 import Data.Text (Text, pack)
 import Keter.Common (AppId, Host, Plugins, Port)
@@ -18,6 +20,7 @@ import Keter.Conduit.Process.Unix
        , ProcessTracker
        )
 import Keter.Config (KeterConfig)
+import Keter.GHC.Types (SOHandles)
 import Keter.HostManager (HostManager)
 import Keter.Logger (Logger)
 import Keter.PortPool (PortPool)
@@ -51,6 +54,7 @@ data App = App
     { appModTime        :: !(TVar (Maybe EpochTime))
     , appRunningWebApps :: !(TVar [RunningWebApp])
     , appBackgroundApps :: !(TVar [RunningBackgroundApp])
+    , appSoLibs         :: !(TVar (Map ByteString SOHandles))
     , appId             :: !AppId
     , appHosts          :: !(TVar (Set Host))
     , appDir            :: !(TVar (Maybe FilePath))
