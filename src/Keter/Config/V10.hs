@@ -217,6 +217,7 @@ data StanzaRaw port
     | StanzaReverseProxy !ReverseProxyConfig ![ MiddlewareConfig ] !(Maybe Int)
     | StanzaBackground !BackgroundConfig
             -- FIXME console app
+    | StanzaSoLib !SoLibConfig
     deriving Show
 
 -- | An action to be performed for a requested hostname.
@@ -264,6 +265,7 @@ instance ParseYamlFile (Stanza ()) where
                                                   <*> o .:? "middleware" .!= []
                                                   <*> o .:? "connection-time-bound"
             "background"    -> fmap StanzaBackground $ parseYamlFile basedir $ Object o
+            "so-lib"        -> fmap StanzaSoLib $ parseYamlFile basedir $ Object o
             _ -> fail $ "Unknown stanza type: " ++ typ
         return $ Stanza raw needsHttps
 
@@ -282,6 +284,7 @@ instance ToJSON (StanzaRaw ()) where
     toJSON (StanzaWebApp x) = addStanzaType "webapp" x
     toJSON (StanzaReverseProxy x _ _) = addStanzaType "reverse-proxy" x
     toJSON (StanzaBackground x) = addStanzaType "background" x
+    toJSON (StanzaSoLib x) = addStanzaType "so-lib" x
 
 addStanzaType :: ToJSON a => Value -> a -> Value
 addStanzaType t x =
@@ -530,4 +533,21 @@ instance ToJSON BackgroundConfig where
             LimitedRestarts count -> Just $ "restart-count" .= count
         , Just $ "restart-delay-seconds" .= bgconfigRestartDelaySeconds
         , Just $ "forward-env" .= bgconfigForwardEnv
+        ]
+
+data SoLibConfig = SoLibConfig
+    { soconfigName :: Text
+    , soconfigExec :: F.FilePath
+    }
+    deriving Show
+
+instance ParseYamlFile SoLibConfig where
+    parseYamlFile basedir = withObject "SoLibConfig" $ \o -> SoLibConfig
+        <$> o .: "name"
+        <*> lookupBase basedir o "exec"
+
+instance ToJSON SoLibConfig where
+    toJSON SoLibConfig {..} = object $ catMaybes
+        [ Just $ "name" .= soconfigName
+        , Just $ "exec" .= soconfigExec
         ]

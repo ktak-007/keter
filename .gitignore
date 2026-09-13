@@ -15,6 +15,7 @@ temp/
 test/app
 incoming/foo/hello
 incoming/foo1_0/hello
+incoming/foo1_1/hello
 incoming/foo1_0/worker
 incoming/websockets/chat
 log/
